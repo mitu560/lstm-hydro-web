@@ -7,7 +7,7 @@ from matplotlib import font_manager
 # -------------------------------
 # 全局中文字体
 # -------------------------------
-font_manager.fontManager.addfont("fonts/NotoSansCJksc-Regular.otf")
+font_manager.fontManager.addfont("fonts/NotoSansCJKsc-Regular.otf")
 plt.rcParams["font.family"] = "Noto Sans CJK"
 plt.rcParams["axes.unicode_minus"] = False
 
