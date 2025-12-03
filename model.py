@@ -1,3 +1,12 @@
+import matplotlib
+import matplotlib.pyplot as plt
+from matplotlib import font_manager
+
+# 使用云端兼容的中文字体
+font_manager.fontManager.addfont("fonts/NotoSansCJksc-Regular.otf")
+plt.rcParams["font.family"] = "Noto Sans CJK"
+plt.rcParams["axes.unicode_minus"] = False
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
