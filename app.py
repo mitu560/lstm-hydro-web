@@ -1,15 +1,25 @@
 import streamlit as st
 import pandas as pd
 from model import run_lstm_pipeline
+import os
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
 
-# -------------------------------
-# 全局中文字体
-# -------------------------------
-font_manager.fontManager.addfont("fonts/NotoSansCJKsc-Regular.otf")
-plt.rcParams["font.family"] = "Noto Sans CJK"
+# 1. 字体路径
+font_path = os.path.join(os.path.dirname(__file__), "fonts", "NotoSansCJKsc-Regular.otf")
+
+# 2. 添加字体
+font_manager.fontManager.addfont(font_path)
+
+# 3. 获取字体的真实 family 名称（关键！）
+prop = font_manager.FontProperties(fname=font_path)
+real_font_name = prop.get_name()
+
+# 4. 设置 matplotlib 全局字体
+plt.rcParams["font.family"] = real_font_name
 plt.rcParams["axes.unicode_minus"] = False
+
+print("使用字体:", real_font_name)
 
 # -------------------------------
 # 页面配置（科技蓝）
