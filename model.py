@@ -29,6 +29,27 @@ from keras.layers import LSTM, Dense
 from keras.callbacks import EarlyStopping
 
 
+# ============ 模型字段 ============
+TARGET_COL = "径流"
+FEATURE_COLS = [
+    'temperature_2m_C',
+    'temperature_2m_max_C',
+    'dewpoint_temperature_2m_C',
+    'skin_temperature_C',
+    'temperature_of_snow_layer_C',
+    'snow_albedo_max_mm',
+    'snow_cover_max_mm',
+    'snow_density_max_mm',
+    'snow_depth_max_mm',
+    'snow_depth_water_equivalent_max_mm',
+    'snowfall_sum_mm',
+    'snowmelt_sum_mm',
+    'total_precipitation_sum_mm',
+    'total_evaporation_sum_mm'
+]
+MODEL_COLS = [TARGET_COL] + FEATURE_COLS
+
+
 # ============ Hampel 滤波函数 ============
 def hampel(vals_orig, k=7, t0=3):
     vals = vals_orig.values
@@ -57,28 +78,23 @@ def prepare_data(data, win_size, target_feature_idx=0):
     return np.asarray(X), np.asarray(y)
 
 
+# ============ 字段检查函数 ============
+def check_required_columns(df, required_cols, data_name="数据"):
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    if missing_cols:
+        raise ValueError(f"{data_name}缺少必要字段：{missing_cols}")
+
+
 # ============ 主函数（训练 + 预测 + 绘图） ============
 def run_lstm_pipeline(df, win_size=12, epochs=200, q_flood=0.85):
 
     # ============ 1. 基础字段 ============
-    target_col = "径流"
-    feature_cols = [
-        'temperature_2m_C',
-        'temperature_2m_max_C',
-        'dewpoint_temperature_2m_C',
-        'skin_temperature_C',
-        'temperature_of_snow_layer_C',
-        'snow_albedo_max_mm',
-        'snow_cover_max_mm',
-        'snow_density_max_mm',
-        'snow_depth_max_mm',
-        'snow_depth_water_equivalent_max_mm',
-        'snowfall_sum_mm',
-        'snowmelt_sum_mm',
-        'total_precipitation_sum_mm',
-        'total_evaporation_sum_mm'
-    ]
+    target_col = TARGET_COL
+    feature_cols = FEATURE_COLS
 
+    check_required_columns(df, ["date"] + MODEL_COLS, "历史训练数据")
+
+    df = df.copy()
     df = df.set_index("date")
     df["径流_raw"] = df["径流"]
 
@@ -87,7 +103,7 @@ def run_lstm_pipeline(df, win_size=12, epochs=200, q_flood=0.85):
 
     # ============ 2. 数据集 ============
     model_cols = [target_col] + feature_cols
-    df_model = df[model_cols]
+    df_model = df[model_cols].copy()
 
     train_size = int(len(df_model) * 0.8)
     df_train = df_model.iloc[:train_size]
@@ -183,5 +199,78 @@ def run_lstm_pipeline(df, win_size=12, epochs=200, q_flood=0.85):
         "metrics": metrics,
         "loss_fig": fig_loss,
         "pred_fig": fig_pred,
-        "flood_fig": fig_flood
+        "flood_fig": fig_flood,
+        "model": model,
+        "scaler": scaler,
+        "history_df": df_model
     }
+
+
+# ============ 未来逐日气象输入 → 径流预测函数 ============
+def forecast_runoff(model, scaler, history_df, future_df, win_size):
+    """
+    使用已经训练完成的 LSTM 模型，根据未来逐日气象数据递推预测径流。
+
+    future_df 必须包含：
+    date + FEATURE_COLS
+
+    注意：当前模型的输入窗口包含“径流 + 气象变量”，因此未来预测采用递推方式：
+    第 1 天使用历史最后 win_size 天窗口预测；之后每天将上一日预测径流与对应气象变量共同加入窗口。
+    """
+
+    check_required_columns(future_df, ["date"] + FEATURE_COLS, "未来气象数据")
+
+    if len(history_df) < win_size:
+        raise ValueError(f"历史数据长度不足，至少需要 {win_size} 行。")
+
+    future_df = future_df.copy()
+    future_df["date"] = pd.to_datetime(future_df["date"])
+
+    for col in FEATURE_COLS:
+        future_df[col] = pd.to_numeric(future_df[col], errors="coerce")
+
+    if future_df[FEATURE_COLS].isna().any().any():
+        bad_cols = future_df[FEATURE_COLS].columns[future_df[FEATURE_COLS].isna().any()].tolist()
+        raise ValueError(f"未来气象数据存在空值或非数值字段：{bad_cols}")
+
+    history_scaled = scaler.transform(history_df[MODEL_COLS])
+    current_window = history_scaled[-win_size:]
+
+    runoff_min = scaler.data_min_[0]
+    runoff_max = scaler.data_max_[0]
+
+    pred_dates = []
+    pred_values = []
+
+    for i in range(len(future_df)):
+        pred_scaled = model.predict(
+            current_window.reshape(
+                1,
+                current_window.shape[0],
+                current_window.shape[1]
+            ),
+            verbose=0
+        )[0, 0]
+
+        pred_real = pred_scaled * (runoff_max - runoff_min) + runoff_min
+        pred_real = float(pred_real)
+
+        pred_dates.append(future_df.iloc[i]["date"])
+        pred_values.append(pred_real)
+
+        future_features = future_df.iloc[i][FEATURE_COLS].astype(float).tolist()
+        new_row_real = pd.DataFrame(
+            [[pred_real] + future_features],
+            columns=MODEL_COLS
+        )
+        new_row_scaled = scaler.transform(new_row_real)[0]
+
+        current_window = np.vstack([
+            current_window[1:],
+            new_row_scaled
+        ])
+
+    return pd.DataFrame({
+        "date": pred_dates,
+        "runoff_pred": pred_values
+    })
